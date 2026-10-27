@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>道路障碍物检测工具</title>
+
+<!-- ============================================================ -->
+<!-- 本地引入 ONNX Runtime Web（ort.min.js 与本 HTML 同目录）       -->
+<!-- ============================================================ -->
+<script src="./ort.min.js"></script>
+
+<style>
+/* ================================================================ */
+/* 设计令牌 —— 清新通透、轻应用质感                                  */
+/* ================================================================ */
+:root{
+  --bg:#F5F7FA; --bg-card:#FFFFFF; --bg-card-alt:#F8FAFC;
+  --border:#E8ECF0; --border-light:#F0F3F6;
+  --accent:#54A0FF; --accent-light:#E8F2FF; --accent-dark:#3B8FE0;
+  --green:#2ED573; --green-light:#E8F8EF;
+  --red:#FF6B6B; --red-light:#FFF0F0;
+  --orange:#FFA94D;
+  --text:#2D3436; --text2:#636E72; --text3:#B2BEC3;
+  --shadow:0 2px 8px rgba(45,52,54,0.06);
+  --shadow-hover:0 4px 16px rgba(45,52,54,0.08);
+  --radius:14px; --radius-sm:10px;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:-apple-system,"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+  font-size:15px;line-height:1.6;
+  display:flex;flex-direction:column;align-items:center;
+  padding:20px;gap:14px;min-height:100vh;
+}
+
+/* 很淡的网格质感背景 */
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background-image:
+    linear-gradient(rgba(84,160,255,0.025) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(84,160,255,0.025) 1px,transparent 1px);
+  background-size:36px 36px;
+}
+
+/* ================================================================ */
+/* 登录页 —— 全屏覆盖，清新卡片                                      */
+/* ================================================================ */
+#loginPage{
+  position:fixed;inset:0;z-index:9999;
+  display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(160deg,#F5F7FA 0%,#EDF1F7 50%,#E8F2FF 100%);
+  opacity:1;visibility:visible;
+  transition:opacity .5s ease,visibility .5s ease;
+}
+#loginPage.hidden{opacity:0;visibility:hidden}
+
+.login-card{
+  background:var(--bg-card);border-radius:20px;
+  padding:40px 32px;width:90%;max-width:360px;text-align:center;
+  box-shadow:0 8px 32px rgba(45,52,54,0.08),0 2px 8px rgba(45,52,54,0.04);
+}
+.login-icon{font-size:40px;margin-bottom:10px;opacity:.85}
+.login-card h1{font-size:21px;font-weight:700;color:var(--text);margin-bottom:8px}
+.login-desc{font-size:13px;color:var(--text2);margin-bottom:26px;line-height:1.6}
+.login-input{
+  width:100%;padding:12px 16px;border:1.5px solid var(--border);
+  border-radius:var(--radius-sm);font-size:15px;color:var(--text);
+  background:var(--bg-card-alt);margin-bottom:12px;transition:all .2s;outline:none;
+}
+.login-input:focus{border-color:var(--accent);background:var(--bg-card);box-shadow:0 0 0 3px rgba(84,160,255,0.1)}
+.login-input::placeholder{color:var(--text3)}
+#btnLogin{
+  width:100%;padding:13px;border:none;border-radius:var(--radius-sm);
+  background:var(--accent);color:#fff;font-size:15px;font-weight:600;
+  cursor:pointer;transition:all .2s;margin-top:4px;
+}
+#btnLogin:hover{background:var(--accent-dark);transform:translateY(-1px);box-shadow:0 4px 12px rgba(84,160,255,0.2)}
+#btnLogin:active{transform:translateY(0)}
+.login-error{font-size:13px;color:var(--red);margin-bottom:8px;min-height:18px;opacity:0;transition:opacity .2s}
+.login-hint{font-size:12px;color:var(--text3);margin-top:16px}
+
+/* ================================================================ */
+/* 退出登录按钮 —— 右上角小巧                                        */
+/* ================================================================ */
+#btnLogout{
+  position:fixed;top:14px;right:16px;z-index:100;
+  padding:7px 14px;border:1px solid var(--border);border-radius:8px;
+  background:rgba(255,255,255,0.85);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  color:var(--text2);font-size:13px;font-weight:500;cursor:pointer;
+  box-shadow:var(--shadow);transition:all .2s;
+}
+#btnLogout:hover{color:var(--red);border-color:var(--red);background:var(--red-light)}
+
+/* ================================================================ */
+/* 标题                                                              */
+/* ================================================================ */
+header{width:100%;max-width:1200px;text-align:center;padding:4px 0}
+header h1{font-size:24px;font-weight:700;color:var(--text)}
+header p{font-size:13px;color:var(--text3);margin-top:4px}
+
+/* ================================================================ */
+/* 状态条卡片                                                        */
+/* ================================================================ */
+#statusBar{
+  width:100%;max-width:1200px;background:var(--bg-card);
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 18px;display:flex;align-items:center;gap:12px;
+  box-shadow:var(--shadow);
+}
+#statusDot{width:10px;height:10px;border-radius:50%;background:var(--text3);flex-shrink:0;transition:all .3s}
+#statusDot.loading{background:var(--orange);animation:pulse 1s infinite}
+#statusDot.ready{background:var(--green)}
+#statusDot.detecting{background:var(--accent);animation:pulse .8s infinite}
+#statusDot.error{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+#statusText{font-size:16px;font-weight:600;flex:1;color:var(--text)}
+#statusHint{font-size:13px;color:var(--text3)}
+#fps{
+  font-size:13px;color:var(--accent);font-weight:700;
+  margin-left:8px;min-width:68px;text-align:right;
+  padding:3px 10px;border-radius:6px;background:var(--accent-light);
+}
+
+/* ================================================================ */
+/* 摄像头卡片                                                        */
+/* ================================================================ */
+#camWrap{
+  width:100%;position:relative;background:#000;
+  border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;aspect-ratio:4/3;box-shadow:var(--shadow);
+}
+#video{width:100%;height:100%;object-fit:cover;display:block}
+#overlay{position:absolute;top:0;left:0;width:100%;height:100%}
+#placeholder{
+  position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:12px;
+  color:var(--text3);background:var(--bg-card-alt);font-size:16px;
+}
+#placeholder .icon{font-size:48px;opacity:.5}
+
+/* ================================================================ */
+/* 控制按钮                                                          */
+/* ================================================================ */
+#controls{width:100%;display:flex;gap:12px}
+.btn{
+  flex:1;padding:13px 24px;border:none;border-radius:var(--radius-sm);
+  font-size:15px;font-weight:600;cursor:pointer;color:#fff;transition:all .2s;
+}
+.btn:hover:not(:disabled){transform:translateY(-1px)}
+.btn:active:not(:disabled){transform:translateY(0) scale(.98)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+#btnStart{background:var(--green);box-shadow:0 2px 8px rgba(46,213,115,.2)}
+#btnStart:hover:not(:disabled){background:#25C56A}
+#btnStop{background:var(--red);box-shadow:0 2px 8px rgba(255,107,107,.2)}
+#btnStop:hover:not(:disabled){background:#E85555}
+
+/* ================================================================ */
+/* 结果面板卡片                                                      */
+/* ================================================================ */
+#resultPanel{
+  width:100%;background:var(--bg-card);
+  border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;box-shadow:var(--shadow);
+}
+#resultHeader{
+  padding:12px 18px;background:var(--bg-card-alt);
+  display:flex;justify-content:space-between;align-items:center;
+  border-bottom:1px solid var(--border);
+}
+#resultHeader h2{font-size:15px;font-weight:600;color:var(--text)}
+#resultCount{
+  font-size:14px;color:var(--accent);font-weight:700;
+  padding:2px 10px;border-radius:6px;background:var(--accent-light);
+}
+#resultList{max-height:220px;overflow-y:auto}
+#resultList::-webkit-scrollbar{width:5px}
+#resultList::-webkit-scrollbar-track{background:transparent}
+#resultList::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.result-item{
+  padding:11px 18px;display:flex;align-items:center;gap:12px;
+  border-bottom:1px solid var(--border-light);transition:background .15s;
+}
+.result-item:hover{background:var(--bg-card-alt)}
+.result-item:last-child{border-bottom:none}
+.ri-color{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+.ri-label{flex:1;font-size:14px;color:var(--text)}
+.ri-conf{font-size:13px;color:var(--text2);font-weight:600}
+.result-empty{padding:24px;text-align:center;color:var(--text3);font-size:14px}
+
+/* ================================================================ */
+/* 日志面板卡片                                                      */
+/* ================================================================ */
+#logPanel{
+  width:100%;background:var(--bg-card);
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 18px;box-shadow:var(--shadow);
+}
+#logPanel h3{font-size:12px;color:var(--text3);margin-bottom:8px;letter-spacing:.5px;text-transform:uppercase}
+#log{max-height:120px;overflow-y:auto;font-size:12px;color:var(--text3);font-family:Consolas,"SF Mono",monospace}
+#log::-webkit-scrollbar{width:5px}
+#log::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+#log div{padding:2px 0}
+#log .err{color:var(--red)}
+#log .ok{color:var(--green)}
+#log .warn{color:var(--orange)}
+
+/* ================================================================ */
+/* 语音功能卡片（TTS 播报 + STT 语音转文字）                         */
+/* ================================================================ */
+#voicePanel{
+  width:100%;background:var(--bg-card);
+  border:1px solid var(--border);border-radius:var(--radius);
+  overflow:hidden;box-shadow:var(--shadow);
+}
+#voiceHeader{
+  padding:12px 18px;background:var(--bg-card-alt);
+  display:flex;justify-content:space-between;align-items:center;
+  border-bottom:1px solid var(--border);
+}
+#voiceHeader h2{font-size:15px;font-weight:600;color:var(--text)}
+#voiceStatus{
+  font-size:13px;color:var(--green);font-weight:600;
+  padding:2px 10px;border-radius:6px;background:var(--green-light);
+  transition:all .2s;
+}
+#voiceBody{padding:14px 18px;display:flex;flex-direction:column;gap:16px}
+.voice-section{display:flex;flex-direction:column;gap:8px}
+.voice-section-title{font-size:13px;color:var(--text2);font-weight:600;letter-spacing:.2px}
+.voice-btns{display:flex;gap:10px;flex-wrap:wrap}
+.btn-voice{
+  flex:1;min-width:120px;padding:10px 16px;
+  border:1.5px solid var(--border);border-radius:var(--radius-sm);
+  background:var(--bg-card-alt);color:var(--text);
+  font-size:14px;font-weight:600;cursor:pointer;transition:all .2s;outline:none;
+}
+.btn-voice:hover:not(:disabled){border-color:var(--accent);background:var(--accent-light);color:var(--accent);transform:translateY(-1px);box-shadow:0 2px 8px rgba(84,160,255,0.1)}
+.btn-voice:active:not(:disabled){transform:translateY(0) scale(.98)}
+.btn-voice:disabled{opacity:.4;cursor:not-allowed}
+#btnSttStart.active{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 2px 8px rgba(84,160,255,0.2)}
+#btnTtsOn.active{background:var(--green);color:#fff;border-color:var(--green);box-shadow:0 2px 8px rgba(46,213,115,0.2)}
+#sttBox{
+  margin-top:4px;padding:10px 14px;background:var(--bg-card-alt);
+  border:1px solid var(--border-light);border-radius:var(--radius-sm);
+}
+.stt-label{font-size:12px;color:var(--text3);margin-bottom:4px;letter-spacing:.2px}
+#sttText{
+  font-size:15px;color:var(--text);min-height:24px;line-height:1.5;
+  word-break:break-all;
+}
+#sttText.placeholder{color:var(--text3)}
+.stt-hint{font-size:11px;color:var(--text3);margin-top:6px;line-height:1.4}
+
+/* ================================================================ */
+/* 主布局 —— 大屏左右分栏，手机上下竖排                              */
+/* ================================================================ */
+.main-layout{
+  width:100%;max-width:1200px;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 340px;
+  gap:16px;align-items:start;
+}
+.cam-side{min-width:0}
+.info-side{display:flex;flex-direction:column;gap:14px;min-width:0}
+@media (max-width:900px){
+  .main-layout{grid-template-columns:1fr;gap:14px}
+}
+
+/* 页脚 */
+footer{width:100%;max-width:1200px;text-align:center;color:var(--text3);font-size:12px;padding:8px}
+</style>
+</head>
+<body>
+
+<!-- ================================================================ -->
+<!-- 登录欢迎页                                                        -->
+<!-- ================================================================ -->
+<div id="loginPage">
+  <div class="login-card">
+    <div class="login-icon">🔍</div>
+    <h1>道路障碍物检测工具</h1>
+    <p class="login-desc">打开摄像头即可实时识别<br>道路上的交通锥、护柱、路障</p>
+    <input class="login-input" type="text" id="loginUser" placeholder="用户名" autocomplete="off">
+    <input class="login-input" type="password" id="loginPass" placeholder="密码" autocomplete="off">
+    <div class="login-error" id="loginError"></div>
+    <button id="btnLogin">进入应用</button>
+    <div class="login-hint">任意非空用户名和密码即可登录</div>
+  </div>
+</div>
+
+<!-- 退出登录按钮（右上角） -->
+<button id="btnLogout">退出登录</button>
+
+<!-- ================================================================ -->
+<!-- 主检测页面（原有 HTML 结构完全保留）                              -->
+<!-- ================================================================ -->
+
+<header>
+  <h1>道路障碍物检测工具</h1>
+  <p>实时识别交通锥、护柱、路障</p>
+</header>
+
+<!-- 状态条 -->
+<div id="statusBar">
+  <div id="statusDot" class="loading"></div>
+  <div id="statusText">正在初始化…</div>
+  <div id="statusHint"></div>
+  <span id="fps"></span>
+</div>
+
+<!-- ================================================================ -->
+<!-- 主布局：大屏左右分栏（左摄像头 / 右卡片组），手机上下竖排          -->
+<!-- ================================================================ -->
+<div class="main-layout">
+
+  <!-- 左侧：摄像头画面 -->
+  <div class="cam-side">
+    <div id="camWrap">
+      <video id="video" autoplay playsinline webkit-playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="placeholder">
+        <div class="icon">📷</div>
+        <div>点击下方按钮开启检测</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧：控制按钮 + 语音 + 结果 + 日志 -->
+  <div class="info-side">
+
+    <!-- 控制按钮 -->
+    <div id="controls">
+      <button class="btn" id="btnStart" disabled>开启摄像头检测</button>
+      <button class="btn" id="btnStop" disabled>关闭检测</button>
+    </div>
+
+<!-- ================================================================ -->
+<!-- 语音功能卡片（TTS 检测结果播报 + STT 语音转文字）                 -->
+<!-- ================================================================ -->
+<div id="voicePanel">
+  <div id="voiceHeader">
+    <h2>语音功能</h2>
+    <span id="voiceStatus">语音播报：开</span>
+  </div>
+  <div id="voiceBody">
+
+    <!-- TTS：检测结果自动语音播报 -->
+    <div class="voice-section">
+      <div class="voice-section-title">🗣 检测结果语音播报</div>
+      <div class="voice-btns">
+        <button class="btn-voice" id="btnTtsOn">开启语音播报</button>
+        <button class="btn-voice" id="btnTtsOff">关闭语音播报</button>
+      </div>
+      <div class="stt-hint">检测到障碍物时自动语音提示，相同内容短时间内不重复播报。</div>
+    </div>
+
+    <!-- STT：语音转文字 -->
+    <div class="voice-section">
+      <div class="voice-section-title">🎤 语音转文字</div>
+      <div class="voice-btns">
+        <button class="btn-voice" id="btnSttStart">开始语音输入</button>
+        <button class="btn-voice" id="btnSttStop" disabled>停止语音输入</button>
+      </div>
+      <div id="sttBox">
+        <div class="stt-label">识别结果</div>
+        <div id="sttText" class="placeholder">（点击「开始语音输入」后说话）</div>
+      </div>
+      <div class="stt-hint">需通过网页链接访问使用，本地双击打开不支持语音功能。</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 检测结果列表 -->
+<div id="resultPanel">
+  <div id="resultHeader">
+    <h2>检测结果</h2>
+    <span id="resultCount">0 项</span>
+  </div>
+  <div id="resultList">
+    <div class="result-empty">尚未开始</div>
+  </div>
+</div>
+
+    <!-- 运行日志 -->
+    <div id="logPanel">
+      <h3>运行日志</h3>
+      <div id="log"></div>
+    </div>
+
+  </div><!-- /info-side -->
+</div><!-- /main-layout -->
+
+<footer>
+  所有计算均在浏览器本地完成，不上传任何数据
+</footer>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================ */
+/* 一、配置常量                                                   */
+/* ============================================================ */
+var MODEL_PATH = "./exp-3.onnx";   // 模型路径（相对路径，与 HTML 同目录）
+var INPUT_SIZE = 640;               // 模型输入尺寸 640×640
+var NUM_CLASSES = 3;                // 类别数量
+var CONF_THRESHOLD = 0.3;           // 置信度阈值
+var NMS_THRESHOLD = 0.5;            // NMS 的 IoU 阈值
+var NUM_ANCHORS = 8400;             // YOLOv8 anchor 总数 (80²+40²+20²=8400)
+var DETECT_DELAY = 80;              // 检测循环间隔(ms)，上一帧推理完后等待时间
+
+/* 类别英文名（与模型训练时一致，顺序不能错） */
+var CLASS_NAMES = ["traffic_cone", "bollard", "barricade"];
+/* 类别中文名（用于界面显示） */
+var CLASS_LABELS_CN = ["交通锥", "护柱", "路障"];
+/* 每个类别的画框颜色 */
+var CLASS_COLORS = ["#F59E0B", "#3B82F6", "#EF4444"];
+
+/* ============================================================ */
+/* 二、DOM 元素引用                                               */
+/* ============================================================ */
+var $ = function(id){ return document.getElementById(id); };
+var video = $("video");             // 摄像头视频元素
+var overlay = $("overlay");         // 叠加画框的 canvas
+var ctx = overlay.getContext("2d");
+var placeholder = $("placeholder"); // 摄像头未启动时的占位提示
+var statusDot = $("statusDot");     // 状态指示灯
+var statusText = $("statusText");   // 状态主文字
+var statusHint = $("statusHint");   // 状态副文字
+var fpsEl = $("fps");               // FPS 显示
+var btnStart = $("btnStart");       // 开始按钮
+var btnStop = $("btnStop");         // 停止按钮
+var resultList = $("resultList");   // 结果列表容器
+var resultCount = $("resultCount"); // 结果计数
+var logEl = $("log");               // 日志容器
+
+/* ============================================================ */
+/* 三、状态变量                                                   */
+/* ============================================================ */
+var session = null;       // ONNX 推理会话
+var isRunning = false;    // 是否正在检测
+var stream = null;        // 摄像头媒体流
+var detectTimer = null;   // 检测定时器 ID
+var frameCount = 0;       // FPS 计帧器
+var fpsLastTime = Date.now();
+
+/* 复用的离屏 Canvas（避免每帧重复创建，提升性能） */
+var srcCanvas = document.createElement("canvas");  // 存放 video 当前帧（原始尺寸）
+var srcCtx = srcCanvas.getContext("2d");
+var lbCanvas = document.createElement("canvas");   // Letterbox 后的 640×640 画布
+lbCanvas.width = INPUT_SIZE;
+lbCanvas.height = INPUT_SIZE;
+var lbCtx = lbCanvas.getContext("2d");
+
+/* ============================================================ */
+/* 四、工具函数                                                   */
+/* ============================================================ */
+
+/* 日志输出（带时间戳和颜色分类） */
+function log(msg, type){
+  var d = document.createElement("div");
+  if(type) d.className = type;
+  var t = new Date().toLocaleTimeString("zh-CN", {hour12:false});
+  d.textContent = "[" + t + "] " + msg;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+  // 限制日志条数，避免内存增长
+  while(logEl.childNodes.length > 80) logEl.removeChild(logEl.firstChild);
+}
+
+/* 状态条更新 */
+function setStatus(state, text, hint){
+  statusDot.className = state || "";
+  statusText.textContent = text;
+  statusHint.textContent = hint || "";
+}
+
+/* FPS 计算（每秒更新一次显示） */
+function updateFPS(){
+  frameCount++;
+  var now = Date.now();
+  if(now - fpsLastTime >= 1000){
+    var fps = Math.round(frameCount * 1000 / (now - fpsLastTime));
+    fpsEl.textContent = fps + " FPS";
+    frameCount = 0;
+    fpsLastTime = now;
+  }
+}
+
+/* ============================================================ */
+/* 五、预处理：Letterbox                                          */
+/* 将任意尺寸图像等比缩放并居中填充到 640×640                      */
+/* 填充值 114（YOLOv8 默认灰色）                                   */
+/* 返回 { scale, padLeft, padTop } 供后处理坐标逆变换使用          */
+/* ============================================================ */
+function letterbox(srcW, srcH){
+  // 计算等比缩放比例（取宽高方向较小值，保证不超出 640）
+  var scale = Math.min(INPUT_SIZE / srcW, INPUT_SIZE / srcH);
+  var nw = Math.round(srcW * scale);  // 缩放后的宽
+  var nh = Math.round(srcH * scale);  // 缩放后的高
+  var padLeft = Math.floor((INPUT_SIZE - nw) / 2);  // 左侧填充
+  var padTop = Math.floor((INPUT_SIZE - nh) / 2);   // 上侧填充
+
+  // 先用灰色 114 填满整个 640×640 画布
+  lbCtx.fillStyle = "rgb(114,114,114)";
+  lbCtx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
+
+  // 再将原图等比缩放后绘制到居中位置
+  lbCtx.drawImage(srcCanvas, 0, 0, srcW, srcH, padLeft, padTop, nw, nh);
+
+  return { scale: scale, padLeft: padLeft, padTop: padTop };
+}
+
+/* ============================================================ */
+/* 六、预处理：HWC → CHW 转换 + 归一化                            */
+/* 从 640×640 画布读取像素，转为 [1,3,640,640] 的 Float32Array    */
+/*                                                                */
+/* HWC（Height×Width×Channel）：ImageData 的 RGBA 排列方式        */
+/* CHW（Channel×Height×Width）：ONNX 模型要求的输入格式           */
+/* 归一化：像素值 / 255.0 → [0.0, 1.0]                            */
+/* ============================================================ */
+function hwcToChw(){
+  var imageData = lbCtx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
+  var data = imageData.data;  // Uint8ClampedArray, RGBA 格式, HWC 排列
+  var chw = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);  // CHW 输出数组
+  var area = INPUT_SIZE * INPUT_SIZE;  // 单通道像素数
+
+  for(var h = 0; h < INPUT_SIZE; h++){
+    for(var w = 0; w < INPUT_SIZE; w++){
+      // HWC 中的源索引（每像素 4 字节：R,G,B,A）
+      var srcIdx = (h * INPUT_SIZE + w) * 4;
+      // CHW 中每通道的目标索引
+      var dstIdx = h * INPUT_SIZE + w;
+
+      // R 通道 → CHW 第 0 通道，归一化
+      chw[0 * area + dstIdx] = data[srcIdx]     / 255.0;
+      // G 通道 → CHW 第 1 通道，归一化
+      chw[1 * area + dstIdx] = data[srcIdx + 1] / 255.0;
+      // B 通道 → CHW 第 2 通道，归一化
+      chw[2 * area + dstIdx] = data[srcIdx + 2] / 255.0;
+    }
+  }
+  return chw;
+}
+
+/* ============================================================ */
+/* 七、IoU 计算（交并比）                                         */
+/* box 格式: [x1, y1, x2, y2]                                    */
+/* ============================================================ */
+function calcIoU(a, b){
+  // 计算交集矩形坐标
+  var x1 = Math.max(a[0], b[0]);
+  var y1 = Math.max(a[1], b[1]);
+  var x2 = Math.min(a[2], b[2]);
+  var y2 = Math.min(a[3], b[3]);
+  var interW = x2 - x1;
+  var interH = y2 - y1;
+  // 无交集则 IoU=0
+  if(interW <= 0 || interH <= 0) return 0;
+  var interArea = interW * interH;
+  // 计算各自面积
+  var areaA = (a[2] - a[0]) * (a[3] - a[1]);
+  var areaB = (b[2] - b[0]) * (b[3] - b[1]);
+  var union = areaA + areaB - interArea;  // 并集面积
+  return union > 0 ? interArea / union : 0;
+}
+
+/* ============================================================ */
+/* 八、NMS（非极大值抑制）                                        */
+/* 按置信度降序排列，依次保留最高分框，                            */
+/* 删除与已保留框 IoU 超过阈值的重叠框                            */
+/* 返回保留的索引数组                                            */
+/* ============================================================ */
+function nms(boxes, scores, iouThreshold){
+  // 生成索引并按分数降序排列
+  var order = [];
+  for(var i = 0; i < scores.length; i++) order.push(i);
+  order.sort(function(a, b){ return scores[b] - scores[a]; });
+
+  var keep = [];
+  while(order.length > 0){
+    // 取当前最高分框，加入保留列表
+    var current = order[0];
+    keep.push(current);
+    order.shift();  // 移除已选
+
+    // 过滤剩余框中与当前框 IoU 过大的（重叠严重）
+    var newOrder = [];
+    for(var j = 0; j < order.length; j++){
+      if(calcIoU(boxes[current], boxes[order[j]]) < iouThreshold){
+        newOrder.push(order[j]);
+      }
+    }
+    order = newOrder;
+  }
+  return keep;
+}
+
+/* ============================================================ */
+/* 九、后处理：解码 YOLOv8 输出 + NMS                             */
+/*                                                                */
+/* YOLOv8 输出张量形状: [1, 4+nc, 8400] = [1, 7, 8400]           */
+/* 数据按 row-major 排列: data[ci * 8400 + ai]                    */
+/*   ci=0,1,2,3 → cx, cy, w, h（中心点坐标+宽高，640×640 空间）   */
+/*   ci=4,5,6   → 3 个类别的置信度分数                            */
+/*   ai         → anchor 索引 (0~8399)                           */
+/* ============================================================ */
+function postprocess(outputData, lb){
+  var boxes = [];     // 候选框 [x1,y1,x2,y2]
+  var scores = [];    // 置信度
+  var classIds = [];  // 类别 ID
+  var ow = srcCanvas.width;   // 原图宽
+  var oh = srcCanvas.height;  // 原图高
+
+  // 遍历全部 8400 个 anchor
+  for(var ai = 0; ai < NUM_ANCHORS; ai++){
+
+    /* --- 第一步：在 3 个类别中找最大分数 --- */
+    var maxScore = 0;
+    var maxClassId = -1;
+    for(var ci = 0; ci < NUM_CLASSES; ci++){
+      // 类别分数在通道 4+ci，数据索引 = (4+ci) * 8400 + ai
+      var score = outputData[(4 + ci) * NUM_ANCHORS + ai];
+      if(score > maxScore){
+        maxScore = score;
+        maxClassId = ci;
+      }
+    }
+
+    /* --- 第二步：置信度过滤 --- */
+    if(maxScore < CONF_THRESHOLD) continue;
+
+    /* --- 第三步：解码 bbox (cx,cy,w,h → x1,y1,x2,y2) --- */
+    // 坐标在 640×640 空间
+    var cx = outputData[0 * NUM_ANCHORS + ai];
+    var cy = outputData[1 * NUM_ANCHORS + ai];
+    var w  = outputData[2 * NUM_ANCHORS + ai];
+    var h  = outputData[3 * NUM_ANCHORS + ai];
+    var x1 = cx - w / 2;
+    var y1 = cy - h / 2;
+    var x2 = cx + w / 2;
+    var y2 = cy + h / 2;
+
+    /* --- 第四步：逆 Letterbox，映射回原图空间 --- */
+    // 公式: x_orig = (x_640 - padLeft) / scale
+    x1 = (x1 - lb.padLeft) / lb.scale;
+    y1 = (y1 - lb.padTop)  / lb.scale;
+    x2 = (x2 - lb.padLeft) / lb.scale;
+    y2 = (y2 - lb.padTop)  / lb.scale;
+
+    /* --- 第五步：裁剪到原图范围 --- */
+    x1 = Math.max(0, Math.min(ow, x1));
+    y1 = Math.max(0, Math.min(oh, y1));
+    x2 = Math.max(0, Math.min(ow, x2));
+    y2 = Math.max(0, Math.min(oh, y2));
+
+    boxes.push([x1, y1, x2, y2]);
+    scores.push(maxScore);
+    classIds.push(maxClassId);
+  }
+
+  /* --- 第六步：NMS 过滤重叠框 --- */
+  var keepIndices = nms(boxes, scores, NMS_THRESHOLD);
+
+  /* --- 第七步：组装最终结果 --- */
+  var results = [];
+  for(var k = 0; k < keepIndices.length; k++){
+    var idx = keepIndices[k];
+    results.push({
+      box: boxes[idx],       // [x1,y1,x2,y2] 原图坐标
+      score: scores[idx],    // 置信度
+      classId: classIds[idx] // 类别 ID
+    });
+  }
+  return results;
+}
+
+/* ============================================================ */
+/* 十、在 Canvas 上绘制检测框                                    */
+/* ============================================================ */
+function drawDetections(detections){
+  var ow = srcCanvas.width;
+  var oh = srcCanvas.height;
+  // 设置 canvas 内部尺寸为原图尺寸（坐标直接对应）
+  overlay.width = ow;
+  overlay.height = oh;
+  ctx.clearRect(0, 0, ow, oh);
+
+  for(var i = 0; i < detections.length; i++){
+    var d = detections[i];
+    var x1 = d.box[0], y1 = d.box[1], x2 = d.box[2], y2 = d.box[3];
+    var color = CLASS_COLORS[d.classId];
+    var label = CLASS_LABELS_CN[d.classId] + " " + Math.round(d.score * 100) + "%";
+
+    // 画矩形框
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = color;
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+
+    // 画标签背景条
+    ctx.font = "bold 18px sans-serif";
+    var tw = ctx.measureText(label).width + 10;
+    ctx.fillStyle = color;
+    ctx.fillRect(x1, y1 - 24, tw, 24);
+
+    // 画标签文字
+    ctx.fillStyle = "#fff";
+    ctx.fillText(label, x1 + 5, y1 - 6);
+  }
+}
+
+/* ============================================================ */
+/* 十一、渲染结果列表到 HTML                                     */
+/* ============================================================ */
+function renderResults(detections){
+  resultCount.textContent = detections.length + " 项";
+  if(detections.length === 0){
+    resultList.innerHTML = '<div class="result-empty">未检测到目标</div>';
+    return;
+  }
+  var html = "";
+  for(var i = 0; i < detections.length; i++){
+    var d = detections[i];
+    var pct = Math.round(d.score * 100);
+    html += '<div class="result-item">' +
+      '<span class="ri-color" style="background:' + CLASS_COLORS[d.classId] + '"></span>' +
+      '<span class="ri-label">' + CLASS_LABELS_CN[d.classId] +
+      ' (' + CLASS_NAMES[d.classId] + ')</span>' +
+      '<span class="ri-conf">' + pct + '%</span>' +
+      '</div>';
+  }
+  resultList.innerHTML = html;
+}
+
+/* ============================================================ */
+/* 十一·A、语音播报模块（TTS）                                   */
+/* 使用浏览器原生 window.speechSynthesis，中文女声播报检测结果    */
+/* 防抖：相同内容不重复 + 最小播报间隔 3 秒                       */
+/* 仅读取 YOLO 推理输出，复用 CLASS_LABELS_CN，不改动推理核心    */
+/* ============================================================ */
+var ttsSupported = (typeof window.speechSynthesis !== "undefined") &&
+                   (typeof window.SpeechSynthesisUtterance !== "undefined");
+var ttsEnabled = true;             // 默认开启播报
+var ttsLastText = "";              // 上一次播报文本（用于相同内容去重）
+var ttsLastTime = 0;               // 上一次播报时间戳
+var TTS_MIN_INTERVAL = 3000;       // 最小播报间隔 3 秒
+var ttsVoiceCN = null;             // 缓存中文女声
+
+/* 初始化中文女声（部分浏览器异步加载 voices） */
+function initTtsVoices(){
+  if(!ttsSupported) return;
+  var voices = window.speechSynthesis.getVoices();
+  var female = null, cnAny = null;
+  for(var i = 0; i < voices.length; i++){
+    var v = voices[i];
+    var lang = (v.lang || "").toLowerCase();
+    if(lang.indexOf("zh") !== 0) continue;       // 仅保留中文语音
+    cnAny = cnAny || v;
+    var name = (v.name || "").toLowerCase();
+    /* 优先匹配常见中文女声关键词 */
+    if(name.indexOf("female") >= 0 || name.indexOf("女") >= 0 ||
+       name.indexOf("xiaoxiao") >= 0 || name.indexOf("xiaoyi") >= 0 ||
+       name.indexOf("huihui") >= 0 || name.indexOf("yaoyao") >= 0 ||
+       name.indexOf("tingting") >= 0 || name.indexOf("yaoyao") >= 0){
+      female = female || v;
+    }
+  }
+  ttsVoiceCN = female || cnAny;
+}
+if(ttsSupported){
+  initTtsVoices();
+  if(typeof window.speechSynthesis.onvoiceschanged !== "undefined"){
+    window.speechSynthesis.onvoiceschanged = initTtsVoices;
+  }
+}
+
+/* 根据检测框水平中心位置返回方位中文（左/右/正前方） */
+function getDirection(box, imgWidth){
+  var cx = (box[0] + box[2]) / 2;
+  var ratio = imgWidth > 0 ? cx / imgWidth : 0.5;
+  if(ratio < 0.35) return "左侧";
+  if(ratio > 0.65) return "右侧";
+  return "正前方";
+}
+
+/* 拼接播报文本：按「方位+类别」聚合，例如「正前方检测到交通锥，请小心避让」 */
+function buildTtsText(detections){
+  if(!detections || detections.length === 0) return "";
+  var ow = srcCanvas.width || 1;
+  var groups = {};
+  var order = [];
+  for(var i = 0; i < detections.length; i++){
+    var d = detections[i];
+    var dir = getDirection(d.box, ow);
+    var label = CLASS_LABELS_CN[d.classId];
+    var key = dir + "|" + label;
+    if(!groups[key]){ groups[key] = 0; order.push(key); }
+    groups[key]++;
+  }
+  var parts = [];
+  for(var k = 0; k < order.length; k++){
+    var seg = order[k].split("|");
+    var dir = seg[0], label = seg[1];
+    var cnt = groups[order[k]];
+    parts.push(dir + "检测到" + (cnt > 1 ? cnt + "个" : "") + label + "，请小心避让");
+  }
+  return parts.join("；");
+}
+
+/* 实际调用 speechSynthesis 朗读 */
+function doSpeak(text){
+  if(!ttsSupported) return;
+  try {
+    window.speechSynthesis.cancel();   // 取消正在进行的播报，避免堆积
+    var u = new SpeechSynthesisUtterance(text);
+    u.lang = "zh-CN";
+    if(ttsVoiceCN) u.voice = ttsVoiceCN;
+    u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
+    window.speechSynthesis.speak(u);
+  } catch(e){
+    log("语音播报异常: " + e.message, "err");
+  }
+}
+
+/* 播报入口（带防抖：相同内容跳过 + 最小间隔 3 秒） */
+function speakDetections(detections){
+  if(!ttsSupported || !ttsEnabled) return;
+  var text = buildTtsText(detections);
+  if(!text) return;
+  var now = Date.now();
+  /* 防抖1：本次文本与上一次完全相同则跳过 */
+  if(text === ttsLastText) return;
+  /* 防抖2：距上次播报不足 3 秒则跳过 */
+  if(now - ttsLastTime < TTS_MIN_INTERVAL) return;
+  ttsLastText = text;
+  ttsLastTime = now;
+  doSpeak(text);
+}
+
+/* ============================================================ */
+/* 十一·B、语音转文字模块（STT）                                */
+/* 浏览器原生 webkitSpeechRecognition，独立模块                  */
+/* 不与 YOLO 检测逻辑耦合，识别报错不影响路障检测                */
+/* ============================================================ */
+var sttSupported = (typeof window.SpeechRecognition !== "undefined") ||
+                   (typeof window.webkitSpeechRecognition !== "undefined");
+var sttRecognition = null;
+var sttRunning = false;
+
+/* ============================================================ */
+/* 十二、检测循环（async，上一帧推理完后再调度下一帧）           */
+/* ============================================================ */
+async function detectLoop(){
+  // 退出条件：未运行 / 无会话 / 视频未就绪
+  if(!isRunning || !session || !video.videoWidth){
+    if(isRunning) detectTimer = setTimeout(detectLoop, DETECT_DELAY);
+    return;
+  }
+
+  try {
+    /* --- 1. 从 video 读取当前帧到离屏 canvas --- */
+    var sw = video.videoWidth;
+    var sh = video.videoHeight;
+    srcCanvas.width = sw;
+    srcCanvas.height = sh;
+    srcCtx.drawImage(video, 0, 0, sw, sh);
+
+    /* --- 2. Letterbox 预处理 → 640×640 --- */
+    var lb = letterbox(sw, sh);
+
+    /* --- 3. HWC → CHW + 归一化 → Float32Array --- */
+    var inputData = hwcToChw();
+
+    /* --- 4. 创建 ONNX 输入张量 [1, 3, 640, 640] --- */
+    var inputTensor = new ort.Tensor("float32", inputData, [1, 3, INPUT_SIZE, INPUT_SIZE]);
+    var feeds = {};
+    feeds[session.inputNames[0]] = inputTensor;  // 输入名动态获取（通常为 "images"）
+
+    /* --- 5. ONNX 推理 --- */
+    var results = await session.run(feeds);
+    var output = results[session.outputNames[0]];  // 输出名动态获取（通常为 "output0"）
+
+    /* --- 6. 后处理：解码 + NMS --- */
+    var detections = postprocess(output.data, lb);
+
+    /* --- 7. 在 Canvas 上画检测框 --- */
+    drawDetections(detections);
+
+    /* --- 8. 更新结果列表 --- */
+    renderResults(detections);
+
+    /* --- 8·A. 语音播报检测结果（TTS，带防抖，不改动推理核心） --- */
+    speakDetections(detections);
+
+    /* --- 9. 更新 FPS --- */
+    updateFPS();
+
+  } catch(e){
+    log("检测异常: " + e.message, "err");
+  }
+
+  // 调度下一帧（递归 setTimeout，避免重叠推理）
+  if(isRunning) detectTimer = setTimeout(detectLoop, DETECT_DELAY);
+}
+
+/* ============================================================ */
+/* 十三、启动摄像头（移动端适配，后置摄像头多级降级）             */
+/* ============================================================ */
+function startCamera(){
+  return new Promise(function(resolve, reject){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      reject(new Error("浏览器不支持摄像头 API"));
+      return;
+    }
+    var gUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+
+    /* 第一级：精确后置摄像头约束 */
+    gUM({ video: { facingMode: { exact: "environment" } }, audio: false })
+      .then(function(s){
+        stream = s; video.srcObject = s;
+        log("后置摄像头已连接（精确约束）", "ok");
+        resolve();
+      })
+      .catch(function(e1){
+        /* 部分机型不支持 exact 约束，降级为理想约束 */
+        if(e1 && (e1.name === "OverconstrainedError" || e1.name === "ConstraintNotSatisfiedError")){
+          log("精确约束不支持，降级为理想约束", "warn");
+          return gUM({ video: { facingMode: "environment" }, audio: false })
+            .then(function(s){
+              stream = s; video.srcObject = s;
+              log("后置摄像头已连接（理想约束）", "ok");
+              resolve();
+            })
+            .catch(function(e2){
+              /* 再降级：任意摄像头 */
+              log("理想约束失败，降级为任意摄像头", "warn");
+              return gUM({ video: true, audio: false })
+                .then(function(s){
+                  stream = s; video.srcObject = s;
+                  log("摄像头已连接（任意）", "ok");
+                  resolve();
+                })
+                .catch(function(e3){ reject(e3); });
+            });
+        } else {
+          /* 非约束错误（如权限拒绝），直接抛出 */
+          reject(e1);
+        }
+      });
+  });
+}
+
+/* ============================================================ */
+/* 十四、开始检测                                                */
+/* ============================================================ */
+async function startDetection(){
+  if(isRunning) return;
+  btnStart.disabled = true;
+  setStatus("loading", "正在启动摄像头…", "");
+
+  try {
+    await startCamera();
+    placeholder.style.display = "none";
+    isRunning = true;
+    btnStop.disabled = false;
+    setStatus("detecting", "检测中…", "YOLOv8 实时推理");
+    log("开始检测循环", "ok");
+    detectLoop();  // 启动检测循环
+  } catch(e){
+    /* 权限异常分类捕获 */
+    var errName = e && e.name ? e.name : "Unknown";
+    var msg = e && e.message ? e.message : String(e);
+
+    if(errName === "NotAllowedError" || errName === "PermissionDeniedError" || errName === "SecurityError"){
+      // 用户拒绝授权
+      log("摄像头授权被拒绝[" + errName + "]: " + msg, "err");
+      setStatus("error", "授权被拒绝", "请在浏览器中允许摄像头权限");
+    } else if(errName === "NotFoundError" || errName === "DevicesNotFoundError"){
+      // 没有可用摄像头
+      log("无可用摄像头[" + errName + "]: " + msg, "err");
+      setStatus("error", "无摄像头", "请检查设备是否有摄像头");
+    } else {
+      // 其他错误
+      log("摄像头启动失败[" + errName + "]: " + msg, "err");
+      setStatus("error", "摄像头不可用", msg);
+    }
+    btnStart.disabled = false;  // 允许重试
+  }
+}
+
+/* ============================================================ */
+/* 十五、停止检测                                                */
+/* ============================================================ */
+function stopDetection(){
+  isRunning = false;
+  // 清除定时器
+  if(detectTimer){ clearTimeout(detectTimer); detectTimer = null; }
+  // 关闭摄像头流
+  if(stream){
+    stream.getTracks().forEach(function(t){ t.stop(); });
+    stream = null;
+  }
+  video.srcObject = null;
+  // 清空画布
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  placeholder.style.display = "flex";
+  // 恢复按钮状态
+  btnStart.disabled = false;
+  btnStop.disabled = true;
+  resultList.innerHTML = '<div class="result-empty">已停止</div>';
+  resultCount.textContent = "0 项";
+  fpsEl.textContent = "";
+  setStatus("ready", "已停止", "点击「开始检测」重新开始");
+  log("检测已停止");
+}
+
+/* ============================================================ */
+/* 十六、初始化：检查本地 ort + 加载模型                          */
+/* ============================================================ */
+async function init(){
+  /* --- 第一步：检查本地 ort.min.js 是否加载成功 --- */
+  if(typeof ort === "undefined"){
+    setStatus("error", "ort.min.js 未加载", "请确保 ort.min.js 与 HTML 在同一目录");
+    log("本地 ort.min.js 加载失败，请检查文件是否存在", "err");
+    return;
+  }
+
+  /* --- 第二步：配置 ONNX Runtime Web（本地 wasm） --- */
+  try {
+    // WASM 路径设为当前目录（ort-wasm.wasm 与 HTML 同目录）
+    ort.env.wasm.wasmPaths = "./";
+    // 单线程模式（避免 SharedArrayBuffer 跨域隔离要求）
+    ort.env.wasm.numThreads = 1;
+    // 禁用 SIMD，确保只加载 ort-wasm.wasm（不需要 ort-wasm-simd.wasm）
+    ort.env.wasm.simd = false;
+    log("ONNX Runtime Web 已就绪（本地引入），WASM 路径: ./", "ok");
+  } catch(e){
+    log("ONNX Runtime 配置警告: " + e.message, "warn");
+  }
+
+  /* --- 第三步：加载 YOLOv8 ONNX 模型 --- */
+  setStatus("loading", "正在加载模型…", MODEL_PATH);
+  log("开始加载模型: " + MODEL_PATH);
+
+  try {
+    // 通过 fetch 读取模型文件为 ArrayBuffer
+    var response = await fetch(MODEL_PATH);
+    if(!response.ok){
+      throw new Error("HTTP " + response.status + " — 请确保 exp-3.onnx 与 HTML 在同一目录，且通过 http:// 访问");
+    }
+    var arrayBuffer = await response.arrayBuffer();
+
+    // 创建推理会话（使用 WASM 后端）
+    session = await ort.InferenceSession.create(arrayBuffer, {
+      executionProviders: ["wasm"]
+    });
+
+    log("模型加载成功", "ok");
+    log("输入: " + session.inputNames[0] + " | 输出: " + session.outputNames[0], "ok");
+    setStatus("ready", "模型已就绪", "点击「开始检测」");
+    btnStart.disabled = false;
+
+  } catch(e){
+    log("模型加载失败: " + e.message, "err");
+    setStatus("error", "模型加载失败", "请确保 exp-3.onnx 在同一目录");
+  }
+}
+
+/* ============================================================ */
+/* 十七、事件绑定 + 启动                                          */
+/* ============================================================ */
+btnStart.addEventListener("click", startDetection);
+btnStop.addEventListener("click", stopDetection);
+
+/* ============================================================ */
+/* 十七·A、语音播报（TTS）按钮事件 + 初始化                       */
+/* ============================================================ */
+var btnTtsOn  = $("btnTtsOn");
+var btnTtsOff = $("btnTtsOff");
+var voiceStatusEl = $("voiceStatus");
+
+function updateTtsUI(){
+  if(!ttsSupported){
+    btnTtsOn.disabled = true;
+    btnTtsOff.disabled = true;
+    voiceStatusEl.textContent = "语音播报：不支持";
+    voiceStatusEl.style.color = "var(--text3)";
+    voiceStatusEl.style.background = "var(--bg-card-alt)";
+    return;
+  }
+  voiceStatusEl.textContent = ttsEnabled ? "语音播报：开" : "语音播报：关";
+  voiceStatusEl.style.color = ttsEnabled ? "var(--green)" : "var(--text3)";
+  voiceStatusEl.style.background = ttsEnabled ? "var(--green-light)" : "var(--bg-card-alt)";
+  btnTtsOn.classList.toggle("active", ttsEnabled);
+  btnTtsOff.classList.toggle("active", !ttsEnabled);
+}
+
+btnTtsOn.addEventListener("click", function(){
+  if(!ttsSupported) return;
+  ttsEnabled = true;
+  updateTtsUI();
+  log("已开启语音播报", "ok");
+});
+btnTtsOff.addEventListener("click", function(){
+  if(!ttsSupported) return;
+  ttsEnabled = false;
+  try { window.speechSynthesis.cancel(); } catch(e) {}
+  ttsLastText = "";
+  updateTtsUI();
+  log("已关闭语音播报");
+});
+
+if(!ttsSupported){
+  log("当前浏览器不支持语音合成（TTS），播报功能已禁用", "warn");
+}
+updateTtsUI();
+
+/* 页面卸载时清理 TTS，避免遗留播报 */
+window.addEventListener("beforeunload", function(){
+  if(ttsSupported){ try { window.speechSynthesis.cancel(); } catch(e) {} }
+});
+
+/* ============================================================ */
+/* 十七·B、语音转文字（STT）按钮事件 + 初始化                     */
+/* 独立模块，与 YOLO 检测完全解耦                                */
+/* ============================================================ */
+var btnSttStart = $("btnSttStart");
+var btnSttStop  = $("btnSttStop");
+var sttTextEl   = $("sttText");
+
+function setSttPlaceholder(text){
+  sttTextEl.textContent = text;
+  sttTextEl.classList.add("placeholder");
+}
+function setSttText(text){
+  sttTextEl.textContent = text;
+  sttTextEl.classList.remove("placeholder");
+}
+
+function initStt(){
+  if(!sttSupported){
+    btnSttStart.disabled = true;
+    btnSttStop.disabled = true;
+    setSttPlaceholder("（当前浏览器不支持语音识别）");
+    log("当前浏览器不支持语音识别（STT），已禁用语音输入", "warn");
+    return;
+  }
+  /* file:// 协议下 SpeechRecognition 不工作 */
+  if(location.protocol === "file:" || location.protocol === "about:"){
+    btnSttStart.disabled = true;
+    btnSttStop.disabled = true;
+    setSttPlaceholder("（本地双击打开不支持语音识别，请使用 http(s):// 访问）");
+    log("file:// 协议不支持语音识别，请通过 http(s):// 访问或部署到 GitHub Pages", "warn");
+    return;
+  }
+  setSttPlaceholder("（点击「开始语音输入」后说话）");
+}
+
+btnSttStart.addEventListener("click", function(){
+  if(!sttSupported || sttRunning) return;
+  try {
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    sttRecognition = new SR();
+    sttRecognition.lang = "zh-CN";
+    sttRecognition.continuous = true;
+    sttRecognition.interimResults = true;
+
+    sttRecognition.onstart = function(){
+      sttRunning = true;
+      btnSttStart.disabled = true;
+      btnSttStart.classList.add("active");
+      btnSttStop.disabled = false;
+      setSttText("（聆听中…请说话）");
+      log("语音识别已开始", "ok");
+    };
+
+    sttRecognition.onresult = function(event){
+      var interim = "", final = "";
+      for(var i = event.resultIndex; i < event.results.length; i++){
+        var r = event.results[i];
+        if(r.isFinal) final += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      var prev = sttTextEl.getAttribute("data-final") || "";
+      if(final){
+        prev += final;
+        sttTextEl.setAttribute("data-final", prev);
+      }
+      var display = prev + (interim ? (prev ? " " : "") + interim : "");
+      if(display){ setSttText(display); } else { setSttText("（聆听中…请说话）"); }
+    };
+
+    sttRecognition.onerror = function(event){
+      var err = (event && event.error) ? event.error : "unknown";
+      log("语音识别错误: " + err, "err");
+      if(err === "not-allowed" || err === "service-not-allowed"){
+        setSttText("（麦克风权限被拒绝，请在浏览器中允许）");
+      } else if(err === "audio-capture"){
+        setSttText("（未找到麦克风设备）");
+      } else if(err === "network"){
+        setSttText("（语音识别网络错误）");
+      }
+      /* no-speech / aborted 等不破坏已有文本 */
+    };
+
+    sttRecognition.onend = function(){
+      sttRunning = false;
+      btnSttStart.disabled = false;
+      btnSttStart.classList.remove("active");
+      btnSttStop.disabled = true;
+      var finalText = sttTextEl.getAttribute("data-final") || "";
+      if(finalText){
+        setSttText(finalText);
+        log("语音识别结束，最终文字已展示");
+      } else {
+        setSttPlaceholder("（未识别到内容，可重新点击开始）");
+        log("语音识别结束，未识别到有效内容");
+      }
+    };
+
+    sttTextEl.removeAttribute("data-final");
+    sttRecognition.start();
+  } catch(e){
+    log("启动语音识别失败: " + e.message, "err");
+    sttRunning = false;
+    btnSttStart.disabled = false;
+    btnSttStart.classList.remove("active");
+    btnSttStop.disabled = true;
+    setSttPlaceholder("（启动失败：" + (e.message || "未知错误") + "）");
+  }
+});
+
+btnSttStop.addEventListener("click", function(){
+  if(!sttRunning || !sttRecognition) return;
+  try { sttRecognition.stop(); } catch(e) {}
+});
+
+initStt();
+
+log("页面已加载，开始初始化…");
+init();
+
+})();
+
+/* ================================================================ */
+/* 登录管理（前端模拟，localStorage 记住登录状态）                   */
+/* 独立 IIFE，不触碰上方任何检测逻辑                                 */
+/* ================================================================ */
+(function(){
+  var loginPage = document.getElementById("loginPage");
+  var btnLogin  = document.getElementById("btnLogin");
+  var btnLogout = document.getElementById("btnLogout");
+  var userInput = document.getElementById("loginUser");
+  var passInput = document.getElementById("loginPass");
+  var errorEl   = document.getElementById("loginError");
+  var KEY = "yolo_logged_in";
+
+  /* 检查是否已登录 —— 已登录则隐藏登录页，直接进入主界面 */
+  try {
+    if(localStorage.getItem(KEY) === "true"){
+      loginPage.classList.add("hidden");
+    }
+  } catch(e) { /* localStorage 不可用时忽略 */ }
+
+  /* 「进入应用」按钮 */
+  btnLogin.addEventListener("click", function(){
+    var u = userInput.value.trim();
+    var p = passInput.value.trim();
+    if(!u || !p){
+      errorEl.textContent = "请输入用户名和密码";
+      errorEl.style.opacity = "1";
+      return;
+    }
+    errorEl.style.opacity = "0";
+    try {
+      localStorage.setItem(KEY, "true");
+      localStorage.setItem("yolo_username", u);
+    } catch(e) {}
+    loginPage.classList.add("hidden");  /* 淡出登录页，露出主检测页面 */
+  });
+
+  /* 「退出登录」按钮 —— 清除记录，回到登录页 */
+  btnLogout.addEventListener("click", function(){
+    try {
+      localStorage.removeItem(KEY);
+      localStorage.removeItem("yolo_username");
+    } catch(e) {}
+    userInput.value = "";
+    passInput.value = "";
+    errorEl.style.opacity = "0";
+    loginPage.classList.remove("hidden");  /* 淡入登录页 */
+  });
+
+  /* 密码框回车 = 登录 */
+  passInput.addEventListener("keydown", function(e){
+    if(e.key === "Enter") btnLogin.click();
+  });
+  /* 用户名框回车 = 跳到密码框 */
+  userInput.addEventListener("keydown", function(e){
+    if(e.key === "Enter"){
+      if(!userInput.value.trim()) return;
+      passInput.focus();
+    }
+  });
+})();
+</script>
+</body>
+</html>
